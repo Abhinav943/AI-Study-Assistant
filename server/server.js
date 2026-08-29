@@ -14,9 +14,30 @@ dotenv.config({ path: path.join(__dirname, ".env") });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const AI_TIMEOUT_MS = 30000;
 
 app.use(cors());
 app.use(express.json());
+
+function withTimeout(task, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${AI_TIMEOUT_MS}ms.`)),
+      AI_TIMEOUT_MS,
+    );
+
+    Promise.resolve()
+      .then(task)
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
 
 function readEnv() {
   try {
@@ -30,6 +51,13 @@ function readEnv() {
 function getKey(name) {
   const env = readEnv();
   return (env[name] || process.env[name] || "").trim();
+}
+
+function sendError(res, status, code, message) {
+  return res.status(status).json({
+    ok: false,
+    error: { code, message },
+  });
 }
 
 async function callAI(prompt, geminiKey, groqKey) {
@@ -51,7 +79,10 @@ async function callAI(prompt, geminiKey, groqKey) {
           model: modelName,
           generationConfig: { responseMimeType: "application/json" },
         });
-        const result = await model.generateContent(prompt);
+        const result = await withTimeout(
+          () => model.generateContent(prompt),
+          `Gemini ${modelName}`,
+        );
         text = result.response.text();
         break;
       } catch (err) {
@@ -73,18 +104,22 @@ async function callAI(prompt, geminiKey, groqKey) {
 
     for (const modelName of groqModels) {
       try {
-        const completion = await groq.chat.completions.create({
-          model: modelName,
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are a study assistant. Always respond with valid JSON only. No markdown code blocks, no extra text.",
-            },
-            { role: "user", content: prompt },
-          ],
-          temperature: 0.4,
-        });
+        const completion = await withTimeout(
+          () =>
+            groq.chat.completions.create({
+              model: modelName,
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "You are a study assistant. Always respond with valid JSON only. No markdown code blocks, no extra text.",
+                },
+                { role: "user", content: prompt },
+              ],
+              temperature: 0.4,
+            }),
+          `Groq ${modelName}`,
+        );
         text = completion.choices[0]?.message?.content || "";
         break;
       } catch (err) {
@@ -101,15 +136,99 @@ async function callAI(prompt, geminiKey, groqKey) {
 }
 
 function parseAIJson(raw) {
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error("AI returned an empty response.");
+  }
+
   const cleaned = raw.replace(/```json\n?|\n?```/g, "").trim();
-  return JSON.parse(cleaned);
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    throw new Error("AI returned malformed JSON.");
+  }
+}
+
+function validateGeneratedItems(items, mode) {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("AI returned no usable items.");
+  }
+
+  const valid = items.filter((item) => {
+    if (!item || typeof item !== "object") return false;
+
+    if (mode === "flashcard") {
+      return (
+        typeof item.fact === "string" &&
+        item.fact.trim() &&
+        typeof item.question === "string" &&
+        item.question.trim() &&
+        Array.isArray(item.options) &&
+        item.options.length === 4 &&
+        item.options.every(
+          (option) => typeof option === "string" && option.trim(),
+        ) &&
+        typeof item.answer === "string" &&
+        item.answer.trim() &&
+        item.options.includes(item.answer) &&
+        typeof item.explanation === "string" &&
+        item.explanation.trim()
+      );
+    }
+
+    const quizType = item.type || "single";
+    const validTypes = ["single", "multi", "typed"];
+    if (!validTypes.includes(quizType)) return false;
+
+    const options = Array.isArray(item.options) ? item.options : [];
+    const correctAnswers = Array.isArray(item.correctAnswers)
+      ? item.correctAnswers
+      : [];
+
+    if (quizType === "typed") {
+      return (
+        Array.isArray(options) &&
+        options.length === 0 &&
+        correctAnswers.length > 0 &&
+        correctAnswers.every(
+          (answer) => typeof answer === "string" && answer.trim(),
+        ) &&
+        typeof item.question === "string" &&
+        item.question.trim() &&
+        typeof item.explanation === "string" &&
+        item.explanation.trim()
+      );
+    }
+
+    return (
+      Array.isArray(options) &&
+      options.length === 4 &&
+      options.every((option) => typeof option === "string" && option.trim()) &&
+      Array.isArray(correctAnswers) &&
+      correctAnswers.length > 0 &&
+      correctAnswers.every(
+        (answer) => typeof answer === "string" && answer.trim(),
+      ) &&
+      correctAnswers.every((answer) => options.includes(answer)) &&
+      typeof item.question === "string" &&
+      item.question.trim() &&
+      typeof item.explanation === "string" &&
+      item.explanation.trim()
+    );
+  });
+
+  if (valid.length === 0) {
+    throw new Error("AI returned malformed or incomplete data.");
+  }
+
+  return valid;
 }
 app.post("/api/generate", async (req, res) => {
   const geminiKey = getKey("GEMINI_API_KEY");
   const groqKey = getKey("GROQ_API_KEY");
 
   if (!geminiKey && !groqKey) {
-    return res.status(500).json({ error: "No AI API key configured." });
+    return sendError(res, 500, "NO_API_KEY", "No AI API key configured.");
   }
 
   const {
@@ -119,7 +238,7 @@ app.post("/api/generate", async (req, res) => {
     quizType = "single",
   } = req.body;
   if (!notes?.trim())
-    return res.status(400).json({ error: "Notes cannot be empty." });
+    return sendError(res, 400, "EMPTY_NOTES", "Notes cannot be empty.");
 
   let prompt = "";
 
@@ -171,16 +290,18 @@ ${notes}
 
   try {
     const raw = await callAI(prompt, geminiKey, groqKey);
-    const items = parseAIJson(raw);
+    const parsed = parseAIJson(raw);
+    const items = validateGeneratedItems(parsed, mode);
 
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(500).json({ error: "AI returned no usable items." });
-    }
-
-    return res.json({ data: items, mode });
+    return res.json({ ok: true, data: items, mode });
   } catch (err) {
     console.error("Generate error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return sendError(
+      res,
+      500,
+      err.code || "AI_GENERATION_FAILED",
+      err.message || "AI generation failed.",
+    );
   }
 });
 
@@ -190,13 +311,20 @@ app.post("/api/review", async (req, res) => {
 
   const { total, score, wrongItems, correctItems, mode } = req.body;
   if (total == null || score == null) {
-    return res.status(400).json({ error: "Missing performance data." });
+    return sendError(
+      res,
+      400,
+      "MISSING_PERFORMANCE_DATA",
+      "Missing performance data.",
+    );
   }
 
-  const pct = Math.round((score / total) * 100);
+  const safeWrongItems = Array.isArray(wrongItems) ? wrongItems : [];
+  const safeCorrectItems = Array.isArray(correctItems) ? correctItems : [];
+  const pct = total > 0 ? Math.round((score / total) * 100) : 0;
 
   const wrongSummary =
-    wrongItems
+    safeWrongItems
       .map((item) =>
         mode === "flashcard"
           ? `- Fact: "${item.fact?.slice(0, 80)}..."`
@@ -205,7 +333,7 @@ app.post("/api/review", async (req, res) => {
       .join("\n") || "None";
 
   const correctSummary =
-    correctItems
+    safeCorrectItems
       .map((item) =>
         mode === "flashcard"
           ? `- "${item.fact?.slice(0, 60)}..."`
@@ -235,10 +363,15 @@ Return ONLY a valid JSON object (no markdown) with this exact schema:
   try {
     const raw = await callAI(prompt, geminiKey, groqKey);
     const review = parseAIJson(raw);
-    return res.json({ review });
+    return res.json({ ok: true, review });
   } catch (err) {
     console.error("Review error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return sendError(
+      res,
+      500,
+      err.code || "AI_REVIEW_FAILED",
+      err.message || "AI review failed.",
+    );
   }
 });
 
