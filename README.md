@@ -50,13 +50,7 @@ npm run dev
 *The client runs on http://localhost:5173*
 
 ## Demo
-Watch the app in action:
-
-```md
-<video src="./demo.mp4" controls width="900" autoplay muted loop>
-  Your browser does not support the video tag.
-</video>
-```
+Watch the app in action: [Video link](https://drive.google.com/file/d/1DTvhUx-OajvawE0pgXgqioR4pU0Jy0G2/view?usp=sharing)
 
 ## AI Usage Note
 AI was used during the development of this project in the following ways:
