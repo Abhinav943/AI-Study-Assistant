@@ -1,16 +1,16 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import OpenAI from 'openai';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-dotenv.config({ path: path.join(__dirname, '.env') });
+dotenv.config({ path: path.join(__dirname, ".env") });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,7 +20,7 @@ app.use(express.json());
 
 function readEnv() {
   try {
-    const raw = fs.readFileSync(path.join(__dirname, '.env'), 'utf8');
+    const raw = fs.readFileSync(path.join(__dirname, ".env"), "utf8");
     return dotenv.parse(raw);
   } catch {
     return {};
@@ -29,88 +29,101 @@ function readEnv() {
 
 function getKey(name) {
   const env = readEnv();
-  return ((env[name] || process.env[name] || '').trim());
+  return (env[name] || process.env[name] || "").trim();
 }
 
 async function callAI(prompt, geminiKey, groqKey) {
   const geminiModels = [
-    'gemini-flash-latest',
-    'gemini-3.5-flash',
-    'gemini-2.5-flash',
-    'gemini-pro-latest',
+    "gemini-flash-latest",
+    "gemini-3.5-flash",
+    "gemini-2.5-flash",
+    "gemini-pro-latest",
   ];
 
   let text = null;
   let lastError = null;
 
-  if (geminiKey && geminiKey !== 'your_gemini_api_key_here') {
+  if (geminiKey && geminiKey !== "your_gemini_api_key_here") {
     const genAI = new GoogleGenerativeAI(geminiKey);
     for (const modelName of geminiModels) {
       try {
-        console.log(`Trying Gemini model: ${modelName}...`);
         const model = genAI.getGenerativeModel({
           model: modelName,
-          generationConfig: { responseMimeType: 'application/json' },
+          generationConfig: { responseMimeType: "application/json" },
         });
         const result = await model.generateContent(prompt);
         text = result.response.text();
-        console.log(`Success: ${modelName}`);
         break;
       } catch (err) {
-        console.warn(`Gemini ${modelName} failed: ${err.message}`);
         lastError = err;
       }
     }
   }
 
-  if (!text && groqKey && groqKey !== 'your_groq_api_key_here') {
-    console.warn('All Gemini models failed — trying Groq...');
-    const groq = new OpenAI({ apiKey: groqKey, baseURL: 'https://api.groq.com/openai/v1' });
-    const groqModels = ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it'];
+  if (!text && groqKey && groqKey !== "your_groq_api_key_here") {
+    const groq = new OpenAI({
+      apiKey: groqKey,
+      baseURL: "https://api.groq.com/openai/v1",
+    });
+    const groqModels = [
+      "llama-3.1-70b-versatile",
+      "llama-3.1-8b-instant",
+      "gemma2-9b-it",
+    ];
 
     for (const modelName of groqModels) {
       try {
-        console.log(`Trying Groq model: ${modelName}...`);
         const completion = await groq.chat.completions.create({
           model: modelName,
           messages: [
-            { role: 'system', content: 'You are a study assistant. Always respond with valid JSON only. No markdown code blocks, no extra text.' },
-            { role: 'user', content: prompt },
+            {
+              role: "system",
+              content:
+                "You are a study assistant. Always respond with valid JSON only. No markdown code blocks, no extra text.",
+            },
+            { role: "user", content: prompt },
           ],
           temperature: 0.4,
         });
-        text = completion.choices[0]?.message?.content || '';
-        console.log(`Success: Groq/${modelName}`);
+        text = completion.choices[0]?.message?.content || "";
         break;
       } catch (err) {
-        console.warn(`Groq ${modelName} failed: ${err.message}`);
         lastError = err;
       }
     }
   }
 
-  if (!text) throw lastError || new Error('All AI providers failed. Please try again later.');
+  if (!text)
+    throw (
+      lastError || new Error("All AI providers failed. Please try again later.")
+    );
   return text;
 }
 
 function parseAIJson(raw) {
-  const cleaned = raw.replace(/```json\n?|\n?```/g, '').trim();
+  const cleaned = raw.replace(/```json\n?|\n?```/g, "").trim();
   return JSON.parse(cleaned);
 }
-app.post('/api/generate', async (req, res) => {
-  const geminiKey = getKey('GEMINI_API_KEY');
-  const groqKey = getKey('GROQ_API_KEY');
+app.post("/api/generate", async (req, res) => {
+  const geminiKey = getKey("GEMINI_API_KEY");
+  const groqKey = getKey("GROQ_API_KEY");
 
   if (!geminiKey && !groqKey) {
-    return res.status(500).json({ error: 'No AI API key configured.' });
+    return res.status(500).json({ error: "No AI API key configured." });
   }
 
-  const { notes, mode = 'flashcard', count = 5, quizType = 'single' } = req.body;
-  if (!notes?.trim()) return res.status(400).json({ error: 'Notes cannot be empty.' });
+  const {
+    notes,
+    mode = "flashcard",
+    count = 5,
+    quizType = "single",
+  } = req.body;
+  if (!notes?.trim())
+    return res.status(400).json({ error: "Notes cannot be empty." });
 
-  let prompt = '';
+  let prompt = "";
 
-  if (mode === 'flashcard') {
+  if (mode === "flashcard") {
     prompt = `
 You are an expert study assistant. Create exactly ${count} study flashcards from the notes below.
 
@@ -129,13 +142,16 @@ Notes:
 ${notes}
 """`;
   } else {
-    let typeRules = '';
-    if (quizType === 'single') {
-      typeRules = 'Exactly 4 options, exactly 1 correct answer. "correctAnswers" is an array of 1 string matching an option exactly.';
-    } else if (quizType === 'multi') {
-      typeRules = 'Exactly 4 options, 1–3 correct answers. "correctAnswers" is an array of strings each matching an option exactly.';
+    let typeRules = "";
+    if (quizType === "single") {
+      typeRules =
+        'Exactly 4 options, exactly 1 correct answer. "correctAnswers" is an array of 1 string matching an option exactly.';
+    } else if (quizType === "multi") {
+      typeRules =
+        'Exactly 4 options, 1–3 correct answers. "correctAnswers" is an array of strings each matching an option exactly.';
     } else {
-      typeRules = '"options" must be an empty array []. "correctAnswers" is an array of acceptable typed-answer variations (case-insensitive).';
+      typeRules =
+        '"options" must be an empty array []. "correctAnswers" is an array of acceptable typed-answer variations (case-insensitive).';
     }
 
     prompt = `
@@ -158,34 +174,44 @@ ${notes}
     const items = parseAIJson(raw);
 
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(500).json({ error: 'AI returned no usable items.' });
+      return res.status(500).json({ error: "AI returned no usable items." });
     }
 
     return res.json({ data: items, mode });
   } catch (err) {
-    console.error('Generate error:', err.message);
+    console.error("Generate error:", err.message);
     return res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/review', async (req, res) => {
-  const geminiKey = getKey('GEMINI_API_KEY');
-  const groqKey = getKey('GROQ_API_KEY');
+app.post("/api/review", async (req, res) => {
+  const geminiKey = getKey("GEMINI_API_KEY");
+  const groqKey = getKey("GROQ_API_KEY");
 
   const { total, score, wrongItems, correctItems, mode } = req.body;
   if (total == null || score == null) {
-    return res.status(400).json({ error: 'Missing performance data.' });
+    return res.status(400).json({ error: "Missing performance data." });
   }
 
   const pct = Math.round((score / total) * 100);
 
-  const wrongSummary = wrongItems.map(item =>
-    mode === 'flashcard' ? `- Fact: "${item.fact?.slice(0, 80)}..."` : `- Question: "${item.question?.slice(0, 80)}..."`
-  ).join('\n') || 'None';
+  const wrongSummary =
+    wrongItems
+      .map((item) =>
+        mode === "flashcard"
+          ? `- Fact: "${item.fact?.slice(0, 80)}..."`
+          : `- Question: "${item.question?.slice(0, 80)}..."`,
+      )
+      .join("\n") || "None";
 
-  const correctSummary = correctItems.map(item =>
-    mode === 'flashcard' ? `- "${item.fact?.slice(0, 60)}..."` : `- "${item.question?.slice(0, 60)}..."`
-  ).join('\n') || 'None';
+  const correctSummary =
+    correctItems
+      .map((item) =>
+        mode === "flashcard"
+          ? `- "${item.fact?.slice(0, 60)}..."`
+          : `- "${item.question?.slice(0, 60)}..."`,
+      )
+      .join("\n") || "None";
 
   const prompt = `
 You are a personal study coach. Analyze this quiz session and give structured feedback.
@@ -211,9 +237,9 @@ Return ONLY a valid JSON object (no markdown) with this exact schema:
     const review = parseAIJson(raw);
     return res.json({ review });
   } catch (err) {
-    console.error('Review error:', err.message);
+    console.error("Review error:", err.message);
     return res.status(500).json({ error: err.message });
   }
 });
 
-app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+app.listen(PORT);
