@@ -147,6 +147,8 @@ function ScoreRing({ score, total }) {
   );
 }
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+
 export default function App() {
   const [notes, setNotes] = useState("");
   const [mode, setMode] = useState("flashcard");
@@ -219,7 +221,7 @@ export default function App() {
     setStatus("loading");
 
     try {
-      const res = await fetch("http://localhost:3000/api/generate", {
+      const res = await fetch(`${API_BASE}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ notes, mode, count, quizType }),
@@ -318,7 +320,7 @@ export default function App() {
     setStatus("reviewing");
     setErrorMessage("");
     try {
-      const res = await fetch("http://localhost:3000/api/review", {
+      const res = await fetch(`${API_BASE}/api/review`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
