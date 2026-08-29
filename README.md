@@ -49,6 +49,17 @@ npm run dev
 ```
 *The client runs on http://localhost:5173*
 
+## Demo
+Watch the app in action:
+
+```md
+<video src="./demo.mp4" controls width="900" autoplay muted loop>
+  Your browser does not support the video tag.
+</video>
+```
+
+Place the demo video file in the project root as `demo.mp4` so it renders directly in the README preview or on GitHub.
+
 ## AI Usage Note
 AI was used during the development of this project in the following ways:
 - **Code Generation & Boilerplate**: Assisting in writing repetitive React state boilerplate and CSS animations (specifically the 3D flip transform).
