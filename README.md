@@ -58,8 +58,6 @@ Watch the app in action:
 </video>
 ```
 
-Place the demo video file in the project root as `demo.mp4` so it renders directly in the README preview or on GitHub.
-
 ## AI Usage Note
 AI was used during the development of this project in the following ways:
 - **Code Generation & Boilerplate**: Assisting in writing repetitive React state boilerplate and CSS animations (specifically the 3D flip transform).
